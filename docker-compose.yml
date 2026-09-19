@@ -1,0 +1,175 @@
+# The whole analytics stack on one host:
+#
+#   browser ──> grainview (nginx :8080) ──/api──> gatelimit ──> eventgrain api ──> postgres
+#                                                                 eventgrain worker ──> redis
+#   prometheus ──> gatelimit /metrics ; grafana ──> prometheus
+#   tablewarden (one-shot) ──> postgres
+#
+# Application images are built from pinned tags of their own repositories;
+# this repository holds no application code. Secrets come from .env (see
+# .env.example); nothing secret is in this file.
+
+name: grainops
+
+x-eventgrain-env: &eventgrain-env
+  DATABASE_URL: postgresql://eventgrain:${POSTGRES_PASSWORD}@postgres:5432/eventgrain
+  REDIS_URL: redis://redis:6379
+  RETENTION_MONTHS: ${RETENTION_MONTHS:-13}
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: eventgrain
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: eventgrain
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U eventgrain -d eventgrain"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  migrate:
+    image: ghcr.io/sriharifortitude/eventgrain:${EVENTGRAIN_VERSION:-v0.1.1}
+    pull_policy: build
+    build:
+      context: https://github.com/sriharifortitude/eventgrain.git#${EVENTGRAIN_VERSION:-v0.1.1}
+    command: ["node", "dist/db/migrate.js"]
+    environment: *eventgrain-env
+    healthcheck:
+      disable: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  eventgrain:
+    image: ghcr.io/sriharifortitude/eventgrain:${EVENTGRAIN_VERSION:-v0.1.1}
+    pull_policy: build
+    build:
+      context: https://github.com/sriharifortitude/eventgrain.git#${EVENTGRAIN_VERSION:-v0.1.1}
+    environment: *eventgrain-env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  eventgrain-worker:
+    image: ghcr.io/sriharifortitude/eventgrain:${EVENTGRAIN_VERSION:-v0.1.1}
+    pull_policy: build
+    build:
+      context: https://github.com/sriharifortitude/eventgrain.git#${EVENTGRAIN_VERSION:-v0.1.1}
+    command: ["node", "dist/worker/main.js"]
+    environment: *eventgrain-env
+    # The image's healthcheck probes the API port; the worker serves nothing.
+    healthcheck:
+      disable: true
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  gatelimit:
+    image: ghcr.io/sriharifortitude/gatelimit:${GATELIMIT_VERSION:-v0.1.0}
+    pull_policy: build
+    build:
+      context: https://github.com/sriharifortitude/gatelimit.git#${GATELIMIT_VERSION:-v0.1.0}
+    command: ["-config", "/etc/gatelimit/gatelimit.json"]
+    environment:
+      REDIS_ADDR: redis:6379
+    volumes:
+      - ./gatelimit/gatelimit.json:/etc/gatelimit/gatelimit.json:ro
+    depends_on:
+      eventgrain:
+        condition: service_healthy
+    restart: unless-stopped
+
+  grainview:
+    image: ghcr.io/sriharifortitude/grainview:${GRAINVIEW_VERSION:-v0.1.1}
+    pull_policy: build
+    build:
+      context: https://github.com/sriharifortitude/grainview.git#${GRAINVIEW_VERSION:-v0.1.1}
+    environment:
+      API_UPSTREAM: http://gatelimit:8080
+    ports:
+      - "${PUBLIC_PORT:-8080}:80"
+    depends_on:
+      - gatelimit
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=15d"]
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      # Loopback only: Prometheus has no authentication of its own.
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+    depends_on:
+      - gatelimit
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:12.1.0
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  # One-shot data-quality gate over the analytics database. Run on demand
+  # (make check) or from cron; exit code 1 means a check failed.
+  tablewarden:
+    image: ghcr.io/sriharifortitude/tablewarden:${TABLEWARDEN_VERSION:-v0.1.0}
+    pull_policy: build
+    build:
+      context: https://github.com/sriharifortitude/tablewarden.git#${TABLEWARDEN_VERSION:-v0.1.0}
+      dockerfile_inline: |
+        FROM python:3.12-slim
+        WORKDIR /src
+        COPY . .
+        RUN pip install --no-cache-dir ".[postgres]"
+        ENTRYPOINT ["tablewarden"]
+    command: ["run", "/checks/eventgrain.toml", "--format", "junit", "--output", "/reports/tablewarden.xml"]
+    environment:
+      DATABASE_URL: postgresql://eventgrain:${POSTGRES_PASSWORD}@postgres:5432/eventgrain
+    volumes:
+      - ./tablewarden:/checks:ro
+      - ./reports:/reports
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles: ["check"]
+    restart: "no"
+
+volumes:
+  postgres-data:
+  prometheus-data:
+  grafana-data:
