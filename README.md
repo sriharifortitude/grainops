@@ -26,7 +26,7 @@ tablewarden checks, a smoke test, and the runbook.
 ## Run it
 
     cp .env.example .env            # set the two passwords
-    make up                         # builds pinned tags from GitHub, waits for health
+    make up                         # builds pinned tags from GitHub and starts everything
     make project NAME="My product" TZ=Europe/Berlin
     open http://localhost:8080      # paste the key; Grafana is on :3000
 

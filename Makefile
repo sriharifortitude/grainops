@@ -2,7 +2,7 @@
 
 # Bring the stack up, building pinned application versions from their repositories.
 up:
-	docker compose up -d --build --wait
+	docker compose up -d --build
 
 down:
 	docker compose down
