@@ -14,8 +14,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  smoke:
-    name: Build the stack from pinned tags and run the smoke test
+  compose:
+    name: Compose stack from pinned tags, end-to-end smoke
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -23,15 +23,33 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: docker compose version
       - name: Configuration is valid
         run: cp .env.example .env && sed -i 's/change-me/ci-only-password/' .env && docker compose config --quiet
-      - name: Smoke test
-        run: bash scripts/smoke.sh
-      - name: Keep the data-quality report
-        if: always()
+      - run: bash scripts/smoke.sh
+      - if: always()
         uses: actions/upload-artifact@v4
         with:
           name: tablewarden-report
           path: reports/tablewarden.xml
           if-no-files-found: ignore
+
+  helm:
+    name: Helm chart lint, schema check, kind end-to-end smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: azure/setup-helm@v4
+      - name: kubeconform
+        run: |
+          curl -sSL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz
+          helm lint helm/grainops
+          helm template ci helm/grainops | ./kubeconform -strict -summary -ignore-missing-schemas
+          helm template ci helm/grainops --set ingress.enabled=true --set gatelimit.serviceMonitor=true --set postgres.enabled=false --set secrets.create=false --set secrets.existingSecret=s | ./kubeconform -strict -summary -ignore-missing-schemas
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: grainops
+      - run: bash scripts/k8s-smoke.sh

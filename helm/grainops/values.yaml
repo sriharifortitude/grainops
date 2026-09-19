@@ -1,0 +1,113 @@
+# Images are the published tags from each repository's release workflow.
+images:
+  eventgrain:
+    repository: ghcr.io/sriharifortitude/eventgrain
+    tag: "0.1.3"
+  grainview:
+    repository: ghcr.io/sriharifortitude/grainview
+    tag: "0.1.3"
+  gatelimit:
+    repository: ghcr.io/sriharifortitude/gatelimit
+    tag: "0.1.1"
+  pullPolicy: IfNotPresent
+
+# Secrets. Either let the chart create one from these values (development
+# only) or point at a Secret you manage with keys POSTGRES_PASSWORD and,
+# when postgres.enabled is false, DATABASE_URL.
+secrets:
+  create: true
+  existingSecret: ""
+  postgresPassword: "change-me"
+
+# In-cluster Postgres: a single StatefulSet with a PVC. For development and
+# evaluation. For production set enabled: false and put DATABASE_URL in the
+# Secret, pointing at a managed instance with backups you have tested.
+postgres:
+  enabled: true
+  image: postgres:17-alpine
+  storage: 5Gi
+  storageClassName: ""
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 1Gi }
+
+# Redis is a cache here (rate-limit state, job schedule); no persistence.
+redis:
+  enabled: true
+  image: redis:7-alpine
+  maxmemory: 256mb
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { memory: 320Mi }
+
+eventgrain:
+  api:
+    replicas: 2
+    resources:
+      requests: { cpu: 100m, memory: 128Mi }
+      limits: { memory: 512Mi }
+  worker:
+    # One worker: BullMQ schedulers are idempotent, so more is safe, but one
+    # is enough for the rollup cadence.
+    replicas: 1
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits: { memory: 512Mi }
+  retentionMonths: 13
+
+gatelimit:
+  replicas: 2
+  # Rules are written to a ConfigMap. Change them here; the pods roll.
+  rules:
+    - name: health
+      path_prefix: /api/health
+      key: ip
+      algorithm: token_bucket
+      rate: 5
+      period: 1s
+      burst: 10
+    - name: ingest
+      path_prefix: /api/events
+      key: api_key
+      algorithm: token_bucket
+      rate: 50
+      period: 1s
+      burst: 200
+    - name: query
+      path_prefix: /api
+      key: api_key
+      algorithm: sliding_window
+      rate: 300
+      period: 1m
+  onStoreError: open
+  # CIDRs whose X-Forwarded-For is believed: your ingress controller's pod network.
+  trustedProxies: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+  resources:
+    requests: { cpu: 50m, memory: 32Mi }
+    limits: { memory: 128Mi }
+  # Set true if the Prometheus Operator CRDs are installed.
+  serviceMonitor: false
+
+grainview:
+  replicas: 2
+  resources:
+    requests: { cpu: 20m, memory: 32Mi }
+    limits: { memory: 128Mi }
+
+ingress:
+  enabled: false
+  className: ""
+  host: analytics.example.com
+  annotations: {}
+  tls: []
+
+# Default-deny with explicit allows between the tiers. Requires a CNI that
+# enforces NetworkPolicy (Calico, Cilium, and kind since v0.20 do; some
+# managed defaults do not -- the smoke test reports which it found).
+networkPolicy:
+  enabled: true
+  # Namespace label selector for whatever may reach grainview (your ingress controller).
+  ingressNamespaceSelector: {}
+
+podDisruptionBudget:
+  enabled: true

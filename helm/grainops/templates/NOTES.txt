@@ -1,0 +1,23 @@
+{{ .Release.Name }} is installed in {{ .Release.Namespace }}.
+
+Create a project and get its API key (shown once):
+
+  kubectl -n {{ .Release.Namespace }} exec deploy/{{ include "grainops.fullname" . }}-eventgrain -- \
+    node dist/cli/main.js project create "My product" --tz Europe/Berlin
+
+Reach the dashboard:
+{{- if .Values.ingress.enabled }}
+  https://{{ .Values.ingress.host }}
+{{- else }}
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "grainops.fullname" . }}-grainview 8080:80
+  then http://localhost:8080
+{{- end }}
+{{- if .Values.secrets.create }}
+
+The Postgres password came from values.yaml. For anything beyond
+evaluation, set secrets.create=false and secrets.existingSecret.
+{{- end }}
+{{- if .Values.postgres.enabled }}
+Postgres is the in-cluster StatefulSet. Back it up, or point
+DATABASE_URL at a managed instance (postgres.enabled=false).
+{{- end }}
