@@ -1,0 +1,44 @@
+{
+  "listen": ":8080",
+  "upstream": "http://eventgrain:4200",
+  "store": "redis",
+  "redis_addr_env": "REDIS_ADDR",
+  "on_store_error": "open",
+  "trusted_proxies": ["172.16.0.0/12", "10.0.0.0/8", "192.168.0.0/16"],
+  "rules": [
+    {
+      "name": "health",
+      "path_prefix": "/api/health",
+      "key": "ip",
+      "algorithm": "token_bucket",
+      "rate": 5,
+      "period": "1s",
+      "burst": 10
+    },
+    {
+      "name": "ingest",
+      "path_prefix": "/api/events",
+      "key": "api_key",
+      "algorithm": "token_bucket",
+      "rate": 50,
+      "period": "1s",
+      "burst": 200
+    },
+    {
+      "name": "erasure",
+      "path_prefix": "/api/persons",
+      "key": "api_key",
+      "algorithm": "sliding_window",
+      "rate": 30,
+      "period": "1m"
+    },
+    {
+      "name": "query",
+      "path_prefix": "/api",
+      "key": "api_key",
+      "algorithm": "sliding_window",
+      "rate": 300,
+      "period": "1m"
+    }
+  ]
+}

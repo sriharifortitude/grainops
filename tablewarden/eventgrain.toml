@@ -1,0 +1,85 @@
+# Data-quality checks over eventgrain's own tables. Run with
+#   make check
+# and read reports/tablewarden.xml (JUnit) or the terminal summary.
+
+[source]
+kind = "postgres"
+dsn_env = "DATABASE_URL"
+
+# -- Invariants the application relies on --------------------------------
+
+[[check]]
+name = "projects.have_a_zone"
+kind = "not_null"
+table = "projects"
+column = "time_zone"
+
+[[check]]
+name = "api_keys.hash_present"
+kind = "not_null"
+table = "api_keys"
+column = "key_hash"
+
+[[check]]
+name = "events.name_present"
+kind = "not_null"
+table = "events"
+column = "name"
+
+[[check]]
+name = "events.person_present"
+kind = "not_null"
+table = "events"
+column = "distinct_id"
+
+[[check]]
+name = "events.belong_to_a_project"
+kind = "references"
+table = "events"
+column = "project_id"
+to_table = "projects"
+to_column = "id"
+
+[[check]]
+name = "event_daily.belong_to_a_project"
+kind = "references"
+table = "event_daily"
+column = "project_id"
+to_table = "projects"
+to_column = "id"
+
+# -- Operational signals ---------------------------------------------------
+
+# The worker should keep the dirty-day backlog near zero; a growing backlog
+# means the worker is down or Redis is unreachable.
+[[check]]
+name = "rollups.backlog_small"
+kind = "row_count"
+table = "rollup_dirty"
+max = 50
+severity = "warn"
+
+# Nothing should have been recorded from the future; ingest rejects it.
+[[check]]
+name = "events.none_from_the_future"
+kind = "sql"
+query = "select count(*) from events where occurred_at > now() + interval '1 day'"
+expect = 0
+
+# Every erasure log entry should have deleted something, or the request
+# was for an unknown person (fine) -- either way, never a negative count.
+[[check]]
+name = "erasures.counts_are_sane"
+kind = "sql"
+query = "select count(*) from erasures where events_deleted < 0"
+expect = 0
+
+# Freshness: if the product is live, events should be arriving. Warn only:
+# a quiet weekend is not an incident.
+[[check]]
+name = "events.arriving"
+kind = "freshness"
+table = "events"
+column = "received_at"
+max_age = "24h"
+severity = "warn"
