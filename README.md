@@ -1,5 +1,7 @@
 # grainops
 
+[![CI](https://github.com/sriharifortitude/grainops/actions/workflows/ci.yml/badge.svg)](https://github.com/sriharifortitude/grainops/actions/workflows/ci.yml)
+
 One `docker compose up` for a self-hosted product-analytics stack built
 from four of my repositories, pinned by tag, with the operational pieces
 a real deployment needs: a rate limiter in front, metrics and a
