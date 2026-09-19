@@ -22,7 +22,7 @@ cleanup() {
 trap cleanup EXIT
 
 step "building and starting"
-compose up -d --build --wait --wait-timeout 300 postgres redis migrate eventgrain eventgrain-worker gatelimit grainview prometheus grafana
+compose up -d --build postgres redis migrate eventgrain eventgrain-worker gatelimit grainview prometheus grafana
 
 step "waiting for the public port"
 for i in $(seq 1 60); do
