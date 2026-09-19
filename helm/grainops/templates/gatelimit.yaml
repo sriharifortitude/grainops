@@ -1,0 +1,123 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "grainops.fullname" . }}-gatelimit
+  labels:
+    {{- include "grainops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gatelimit
+data:
+  gatelimit.json: |
+    {{- $cfg := dict
+        "listen" ":8080"
+        "upstream" (printf "http://%s-eventgrain:4200" (include "grainops.fullname" .))
+        "store" "redis"
+        "redis_addr_env" "REDIS_ADDR"
+        "on_store_error" .Values.gatelimit.onStoreError
+        "trusted_proxies" .Values.gatelimit.trustedProxies
+        "rules" .Values.gatelimit.rules }}
+    {{ toPrettyJson $cfg | nindent 4 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "grainops.fullname" . }}-gatelimit
+  labels:
+    {{- include "grainops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gatelimit
+  {{- if not .Values.gatelimit.serviceMonitor }}
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8080"
+    prometheus.io/path: /metrics
+  {{- end }}
+spec:
+  selector:
+    {{- include "grainops.selector" . | nindent 4 }}
+    app.kubernetes.io/component: gatelimit
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "grainops.fullname" . }}-gatelimit
+  labels:
+    {{- include "grainops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gatelimit
+spec:
+  replicas: {{ .Values.gatelimit.replicas }}
+  selector:
+    matchLabels:
+      {{- include "grainops.selector" . | nindent 6 }}
+      app.kubernetes.io/component: gatelimit
+  template:
+    metadata:
+      labels:
+        {{- include "grainops.selector" . | nindent 8 }}
+        app.kubernetes.io/component: gatelimit
+      annotations:
+        # A rule change rolls the pods; without this a ConfigMap edit is invisible until the next restart.
+        checksum/config: {{ toJson .Values.gatelimit | sha256sum }}
+    spec:
+      securityContext:
+        runAsUser: 65532
+        runAsGroup: 65532
+        {{- include "grainops.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: gatelimit
+          image: "{{ .Values.images.gatelimit.repository }}:{{ .Values.images.gatelimit.tag }}"
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          args: ["-config", "/etc/gatelimit/gatelimit.json"]
+          securityContext:
+            {{- include "grainops.containerSecurityContext" . | nindent 12 }}
+          env:
+            - name: REDIS_ADDR
+              value: {{ include "grainops.fullname" . }}-redis:6379
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.gatelimit.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/gatelimit
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "grainops.fullname" . }}-gatelimit
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "grainops.selector" . | nindent 14 }}
+              app.kubernetes.io/component: gatelimit
+{{- if .Values.gatelimit.serviceMonitor }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "grainops.fullname" . }}-gatelimit
+  labels:
+    {{- include "grainops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gatelimit
+spec:
+  selector:
+    matchLabels:
+      {{- include "grainops.selector" . | nindent 6 }}
+      app.kubernetes.io/component: gatelimit
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+{{- end }}

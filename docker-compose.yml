@@ -43,10 +43,10 @@ services:
     restart: unless-stopped
 
   migrate:
-    image: ghcr.io/sriharifortitude/eventgrain:${EVENTGRAIN_VERSION:-v0.1.1}
+    image: ghcr.io/sriharifortitude/eventgrain:${EVENTGRAIN_VERSION:-v0.1.2}
     pull_policy: build
     build:
-      context: https://github.com/sriharifortitude/eventgrain.git#${EVENTGRAIN_VERSION:-v0.1.1}
+      context: https://github.com/sriharifortitude/eventgrain.git#${EVENTGRAIN_VERSION:-v0.1.2}
     command: ["node", "dist/db/migrate.js"]
     environment: *eventgrain-env
     healthcheck:
@@ -57,10 +57,10 @@ services:
     restart: "no"
 
   eventgrain:
-    image: ghcr.io/sriharifortitude/eventgrain:${EVENTGRAIN_VERSION:-v0.1.1}
+    image: ghcr.io/sriharifortitude/eventgrain:${EVENTGRAIN_VERSION:-v0.1.2}
     pull_policy: build
     build:
-      context: https://github.com/sriharifortitude/eventgrain.git#${EVENTGRAIN_VERSION:-v0.1.1}
+      context: https://github.com/sriharifortitude/eventgrain.git#${EVENTGRAIN_VERSION:-v0.1.2}
     environment: *eventgrain-env
     depends_on:
       migrate:
@@ -70,10 +70,10 @@ services:
     restart: unless-stopped
 
   eventgrain-worker:
-    image: ghcr.io/sriharifortitude/eventgrain:${EVENTGRAIN_VERSION:-v0.1.1}
+    image: ghcr.io/sriharifortitude/eventgrain:${EVENTGRAIN_VERSION:-v0.1.2}
     pull_policy: build
     build:
-      context: https://github.com/sriharifortitude/eventgrain.git#${EVENTGRAIN_VERSION:-v0.1.1}
+      context: https://github.com/sriharifortitude/eventgrain.git#${EVENTGRAIN_VERSION:-v0.1.2}
     command: ["node", "dist/worker/main.js"]
     environment: *eventgrain-env
     # The image's healthcheck probes the API port; the worker serves nothing.
@@ -87,10 +87,10 @@ services:
     restart: unless-stopped
 
   gatelimit:
-    image: ghcr.io/sriharifortitude/gatelimit:${GATELIMIT_VERSION:-v0.1.0}
+    image: ghcr.io/sriharifortitude/gatelimit:${GATELIMIT_VERSION:-v0.1.1}
     pull_policy: build
     build:
-      context: https://github.com/sriharifortitude/gatelimit.git#${GATELIMIT_VERSION:-v0.1.0}
+      context: https://github.com/sriharifortitude/gatelimit.git#${GATELIMIT_VERSION:-v0.1.1}
     command: ["-config", "/etc/gatelimit/gatelimit.json"]
     environment:
       REDIS_ADDR: redis:6379
@@ -102,14 +102,14 @@ services:
     restart: unless-stopped
 
   grainview:
-    image: ghcr.io/sriharifortitude/grainview:${GRAINVIEW_VERSION:-v0.1.1}
+    image: ghcr.io/sriharifortitude/grainview:${GRAINVIEW_VERSION:-v0.1.3}
     pull_policy: build
     build:
-      context: https://github.com/sriharifortitude/grainview.git#${GRAINVIEW_VERSION:-v0.1.1}
+      context: https://github.com/sriharifortitude/grainview.git#${GRAINVIEW_VERSION:-v0.1.3}
     environment:
       API_UPSTREAM: http://gatelimit:8080
     ports:
-      - "${PUBLIC_PORT:-8080}:80"
+      - "${PUBLIC_PORT:-8080}:8080"
     depends_on:
       - gatelimit
     restart: unless-stopped

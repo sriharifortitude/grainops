@@ -1,0 +1,143 @@
+{{- if .Values.networkPolicy.enabled }}
+# Default deny for every pod of this release, then the graph the README
+# draws: ingress -> grainview -> gatelimit -> api -> postgres; worker and
+# gatelimit -> redis; api and worker -> postgres. Egress to DNS is allowed
+# everywhere; egress elsewhere is not, which is also what stops a
+# compromised pod from calling out.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "grainops.fullname" . }}-default-deny
+  labels:
+    {{- include "grainops.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "grainops.selector" . | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+{{- $edges := list
+  (dict "from" "grainview" "to" "gatelimit" "port" 8080)
+  (dict "from" "gatelimit" "to" "api" "port" 4200)
+  (dict "from" "gatelimit" "to" "redis" "port" 6379)
+  (dict "from" "api" "to" "postgres" "port" 5432)
+  (dict "from" "api" "to" "redis" "port" 6379)
+  (dict "from" "worker" "to" "postgres" "port" 5432)
+  (dict "from" "worker" "to" "redis" "port" 6379)
+ }}
+{{- range $edge := $edges }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "grainops.fullname" $ }}-{{ $edge.from }}-to-{{ $edge.to }}
+  labels:
+    {{- include "grainops.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "grainops.selector" $ | nindent 6 }}
+      app.kubernetes.io/component: {{ $edge.to }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "grainops.selector" $ | nindent 14 }}
+              app.kubernetes.io/component: {{ $edge.from }}
+      ports:
+        - protocol: TCP
+          port: {{ $edge.port }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "grainops.fullname" $ }}-{{ $edge.from }}-egress-{{ $edge.to }}
+  labels:
+    {{- include "grainops.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "grainops.selector" $ | nindent 6 }}
+      app.kubernetes.io/component: {{ $edge.from }}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "grainops.selector" $ | nindent 14 }}
+              app.kubernetes.io/component: {{ $edge.to }}
+      ports:
+        - protocol: TCP
+          port: {{ $edge.port }}
+{{- end }}
+---
+# Whatever fronts grainview (an ingress controller in another namespace,
+# or anything at all when the selector is empty) may reach it on 8080.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "grainops.fullname" . }}-ingress-to-grainview
+  labels:
+    {{- include "grainops.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "grainops.selector" . | nindent 6 }}
+      app.kubernetes.io/component: grainview
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            {{- toYaml .Values.networkPolicy.ingressNamespaceSelector | nindent 12 }}
+      ports:
+        - protocol: TCP
+          port: 8080
+---
+# Prometheus scrapes gatelimit from wherever it runs.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "grainops.fullname" . }}-scrape-gatelimit
+  labels:
+    {{- include "grainops.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "grainops.selector" . | nindent 6 }}
+      app.kubernetes.io/component: gatelimit
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 8080
+{{- end }}
+{{- if .Values.podDisruptionBudget.enabled }}
+{{- range $c := list "api" "gatelimit" "grainview" }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "grainops.fullname" $ }}-{{ $c }}
+  labels:
+    {{- include "grainops.labels" $ | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "grainops.selector" $ | nindent 6 }}
+      app.kubernetes.io/component: {{ $c }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,133 @@
+{{/*
+Migrations run as an init container on every API and worker pod, before
+the main container starts. The migrator takes a Postgres advisory lock, so
+replicas starting together serialise and exactly one applies what is
+pending. During a rolling upgrade the new pod migrates before it becomes
+ready while the old pods keep serving, which means migrations must be
+backwards compatible with the previous version (expand, then contract).
+
+This replaces a Helm pre-install hook Job, which cannot work here: hooks
+run before the release's own Secret and Postgres exist.
+*/}}
+{{- define "grainops.migrateInit" -}}
+initContainers:
+  - name: migrate
+    image: "{{ .Values.images.eventgrain.repository }}:{{ .Values.images.eventgrain.tag }}"
+    imagePullPolicy: {{ .Values.images.pullPolicy }}
+    command: ["node", "dist/db/migrate.js"]
+    securityContext:
+      {{- include "grainops.containerSecurityContext" . | nindent 6 }}
+    env:
+      {{- include "grainops.eventgrainEnv" . | nindent 6 }}
+    resources:
+      requests: { cpu: 50m, memory: 64Mi }
+      limits: { memory: 256Mi }
+{{- end -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "grainops.fullname" . }}-eventgrain
+  labels:
+    {{- include "grainops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  selector:
+    {{- include "grainops.selector" . | nindent 4 }}
+    app.kubernetes.io/component: api
+  ports:
+    - name: http
+      port: 4200
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "grainops.fullname" . }}-eventgrain
+  labels:
+    {{- include "grainops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  replicas: {{ .Values.eventgrain.api.replicas }}
+  selector:
+    matchLabels:
+      {{- include "grainops.selector" . | nindent 6 }}
+      app.kubernetes.io/component: api
+  template:
+    metadata:
+      labels:
+        {{- include "grainops.selector" . | nindent 8 }}
+        app.kubernetes.io/component: api
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        {{- include "grainops.podSecurityContext" . | nindent 8 }}
+      {{- include "grainops.migrateInit" . | nindent 6 }}
+      containers:
+        - name: api
+          image: "{{ .Values.images.eventgrain.repository }}:{{ .Values.images.eventgrain.tag }}"
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          securityContext:
+            {{- include "grainops.containerSecurityContext" . | nindent 12 }}
+          env:
+            {{- include "grainops.eventgrainEnv" . | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 4200
+          readinessProbe:
+            httpGet: { path: /api/health, port: http }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /api/health, port: http }
+            periodSeconds: 20
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.eventgrain.api.resources | nindent 12 }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "grainops.selector" . | nindent 14 }}
+              app.kubernetes.io/component: api
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "grainops.fullname" . }}-eventgrain-worker
+  labels:
+    {{- include "grainops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: {{ .Values.eventgrain.worker.replicas }}
+  selector:
+    matchLabels:
+      {{- include "grainops.selector" . | nindent 6 }}
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        {{- include "grainops.selector" . | nindent 8 }}
+        app.kubernetes.io/component: worker
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        {{- include "grainops.podSecurityContext" . | nindent 8 }}
+      terminationGracePeriodSeconds: 30
+      {{- include "grainops.migrateInit" . | nindent 6 }}
+      containers:
+        - name: worker
+          image: "{{ .Values.images.eventgrain.repository }}:{{ .Values.images.eventgrain.tag }}"
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          command: ["node", "dist/worker/main.js"]
+          securityContext:
+            {{- include "grainops.containerSecurityContext" . | nindent 12 }}
+          env:
+            {{- include "grainops.eventgrainEnv" . | nindent 12 }}
+          # The worker serves no HTTP. Liveness is "the process is up"; a
+          # wedged worker shows as a growing rollup backlog, which the
+          # tablewarden check and the runbook cover.
+          resources:
+            {{- toYaml .Values.eventgrain.worker.resources | nindent 12 }}

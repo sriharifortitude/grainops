@@ -1,0 +1,109 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "grainops.fullname" . }}-grainview
+  labels:
+    {{- include "grainops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: grainview
+spec:
+  selector:
+    {{- include "grainops.selector" . | nindent 4 }}
+    app.kubernetes.io/component: grainview
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "grainops.fullname" . }}-grainview
+  labels:
+    {{- include "grainops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: grainview
+spec:
+  replicas: {{ .Values.grainview.replicas }}
+  selector:
+    matchLabels:
+      {{- include "grainops.selector" . | nindent 6 }}
+      app.kubernetes.io/component: grainview
+  template:
+    metadata:
+      labels:
+        {{- include "grainops.selector" . | nindent 8 }}
+        app.kubernetes.io/component: grainview
+    spec:
+      securityContext:
+        {{- include "grainops.podSecurityContext" . | nindent 8 }}
+        runAsUser: 101
+        runAsGroup: 101
+        # emptyDir volumes are created root-owned; fsGroup makes them writable by nginx.
+        fsGroup: 101
+      containers:
+        - name: nginx
+          image: "{{ .Values.images.grainview.repository }}:{{ .Values.images.grainview.tag }}"
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          securityContext:
+            {{- include "grainops.containerSecurityContext" . | nindent 12 }}
+          env:
+            - name: API_UPSTREAM
+              value: http://{{ include "grainops.fullname" . }}-gatelimit:8080
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet: { path: /, port: http }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /, port: http }
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.grainview.resources | nindent 12 }}
+          # The image is rootless and read-only apart from these three
+          # directories nginx writes at start (rendered config, cache, pid).
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: cache
+              mountPath: /var/cache/nginx
+            - name: conf
+              mountPath: /etc/nginx/conf.d
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: cache
+          emptyDir: {}
+        - name: conf
+          emptyDir: {}
+{{- if .Values.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "grainops.fullname" . }}
+  labels:
+    {{- include "grainops.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with .Values.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "grainops.fullname" . }}-grainview
+                port:
+                  name: http
+{{- end }}
