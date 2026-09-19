@@ -1,0 +1,5 @@
+.env
+*.log
+reports/*
+!reports/.gitkeep
+backups/
