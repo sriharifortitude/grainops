@@ -118,6 +118,30 @@ has 15 days of retention and is rebuilt by scraping.
 Reads `tablewarden/eventgrain.toml`, writes `reports/tablewarden.xml`.
 Run it from cron and ship the JUnit file wherever your CI reports go.
 
+## Kubernetes specifics
+
+Everything above applies with `kubectl -n <ns> exec deploy/<release>-eventgrain -- …`
+in place of `docker compose run --rm -T eventgrain …`, and
+`kubectl -n <ns> exec <release>-postgres-0 -- pg_dump …` for backups of the
+in-cluster Postgres. Additionally:
+
+- **Changing gatelimit rules:** put the full `gatelimit.rules` list in a
+  values file and `helm upgrade -f`. `--set gatelimit.rules[0].burst=…`
+  replaces the whole list with one broken rule; gatelimit refuses to start
+  on it, the rollout stalls with the old pods serving, and `helm upgrade`
+  fails. `kubectl logs` on the new pod names the missing fields.
+- **A stuck rollout** (`helm upgrade` timed out): `kubectl get pods` —
+  the crash-looping pod's logs say why; `helm rollback <release>` returns
+  to the previous values.
+- **Migrations:** every API pod runs them at start under an advisory lock.
+  If a migration fails, the new pods never become ready and the old ones
+  keep serving; fix forward or `helm rollback`. Migrations must be
+  backwards compatible with the version still running (expand, then
+  contract in a later release).
+- **NetworkPolicy** requires an enforcing CNI. If the smoke test prints
+  "this cluster's CNI does not enforce NetworkPolicy", the policies are
+  present but decorative; treat the namespace as flat.
+
 ## Ports
 
 | host port | service | notes |
