@@ -49,6 +49,13 @@ jobs:
           helm lint helm/grainops
           helm template ci helm/grainops | ./kubeconform -strict -summary -ignore-missing-schemas
           helm template ci helm/grainops --set ingress.enabled=true --set gatelimit.serviceMonitor=true --set postgres.enabled=false --set secrets.create=false --set secrets.existingSecret=s | ./kubeconform -strict -summary -ignore-missing-schemas
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+      - name: kubeshield -- fail the build on a real security finding, not just a schema error
+        run: |
+          go install github.com/sriharifortitude/kubeshield/cmd/kubeshield@v0.1.0
+          helm template ci helm/grainops | kubeshield scan -
       - uses: helm/kind-action@v1
         with:
           cluster_name: grainops
