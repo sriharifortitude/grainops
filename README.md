@@ -77,7 +77,18 @@ kind-based smoke test in CI checks it:
   values only for evaluation. Rule changes go in a values file, not
   `--set gatelimit.rules[0]...` — Helm replaces lists wholesale.
 - PodDisruptionBudgets, topology spread, resource requests and limits,
-  `seccompProfile: RuntimeDefault`, all capabilities dropped.
+  `seccompProfile: RuntimeDefault`, all capabilities dropped, every
+  container's root filesystem read-only (Postgres included -- its unix
+  socket directory and scratch space get their own `emptyDir` mounts,
+  since `PGDATA` already lives on its own PVC).
+- **[kubeshield](https://github.com/sriharifortitude/kubeshield) scans
+  the rendered chart in CI** and fails the build on a real finding, not
+  just a schema error. It caught two real gaps in this chart before this
+  line existed: every container had a memory limit but no CPU limit, and
+  Postgres had no `readOnlyRootFilesystem`. Both are fixed above; the CPU
+  limits are set 5-10x the request as a runaway-process safety net, not a
+  tight cap -- a limit close to the request causes CFS throttling under
+  a normal burst, which hurts tail latency worse than no limit at all.
 
 What it leaves to the cluster: TLS (an Ingress with `ingress.enabled`,
 cert-manager for certificates), Prometheus (scrape annotations by
