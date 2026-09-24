@@ -21,7 +21,7 @@ initContainers:
       {{- include "grainops.eventgrainEnv" . | nindent 6 }}
     resources:
       requests: { cpu: 50m, memory: 64Mi }
-      limits: { memory: 256Mi }
+      limits: { cpu: 250m, memory: 256Mi }
 {{- end -}}
 apiVersion: v1
 kind: Service
