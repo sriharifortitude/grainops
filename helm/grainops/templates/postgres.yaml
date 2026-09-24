@@ -45,6 +45,7 @@ spec:
           image: {{ .Values.postgres.image }}
           securityContext:
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
           env:
@@ -76,6 +77,19 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data
+            # readOnlyRootFilesystem above means these two -- the unix
+            # socket directory and scratch space for sorts/temp files --
+            # need their own writable mounts; PGDATA already lives on the
+            # data PVC, not the root filesystem, so it needs nothing extra.
+            - name: run
+              mountPath: /var/run/postgresql
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: run
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
   volumeClaimTemplates:
     - metadata:
         name: data
