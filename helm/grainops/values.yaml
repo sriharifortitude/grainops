@@ -27,9 +27,14 @@ postgres:
   image: postgres:17-alpine
   storage: 5Gi
   storageClassName: ""
+  # cpu limits here are a safety net against a runaway process, not a
+  # tight cap: sized well above the request (5-10x) so normal bursts
+  # never hit CFS throttling, which hurts tail latency worse than no
+  # limit at all. memory has no equivalent "throttle" -- a container
+  # that exceeds its memory limit is OOMKilled, so that one stays tight.
   resources:
     requests: { cpu: 100m, memory: 256Mi }
-    limits: { memory: 1Gi }
+    limits: { cpu: 500m, memory: 1Gi }
 
 # Redis is a cache here (rate-limit state, job schedule); no persistence.
 redis:
@@ -38,21 +43,21 @@ redis:
   maxmemory: 256mb
   resources:
     requests: { cpu: 50m, memory: 64Mi }
-    limits: { memory: 320Mi }
+    limits: { cpu: 250m, memory: 320Mi }
 
 eventgrain:
   api:
     replicas: 2
     resources:
       requests: { cpu: 100m, memory: 128Mi }
-      limits: { memory: 512Mi }
+      limits: { cpu: 500m, memory: 512Mi }
   worker:
     # One worker: BullMQ schedulers are idempotent, so more is safe, but one
     # is enough for the rollup cadence.
     replicas: 1
     resources:
       requests: { cpu: 50m, memory: 128Mi }
-      limits: { memory: 512Mi }
+      limits: { cpu: 300m, memory: 512Mi }
   retentionMonths: 13
 
 gatelimit:
@@ -84,7 +89,7 @@ gatelimit:
   trustedProxies: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
   resources:
     requests: { cpu: 50m, memory: 32Mi }
-    limits: { memory: 128Mi }
+    limits: { cpu: 250m, memory: 128Mi }
   # Set true if the Prometheus Operator CRDs are installed.
   serviceMonitor: false
 
@@ -92,7 +97,7 @@ grainview:
   replicas: 2
   resources:
     requests: { cpu: 20m, memory: 32Mi }
-    limits: { memory: 128Mi }
+    limits: { cpu: 100m, memory: 128Mi }
 
 ingress:
   enabled: false
