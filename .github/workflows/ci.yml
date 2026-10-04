@@ -19,15 +19,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
       - name: Configuration is valid
         run: cp .env.example .env && sed -i 's/change-me/ci-only-password/' .env && docker compose config --quiet
       - run: bash scripts/smoke.sh
       - if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: tablewarden-report
           path: reports/tablewarden.xml
@@ -38,25 +38,25 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
       - name: kubeconform
         run: |
           curl -sSL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz
           helm lint helm/grainops
           helm template ci helm/grainops | ./kubeconform -strict -summary -ignore-missing-schemas
           helm template ci helm/grainops --set ingress.enabled=true --set gatelimit.serviceMonitor=true --set postgres.enabled=false --set secrets.create=false --set secrets.existingSecret=s | ./kubeconform -strict -summary -ignore-missing-schemas
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: '1.27'
       - name: kubeshield -- fail the build on a real security finding, not just a schema error
         run: |
           go install github.com/sriharifortitude/kubeshield/cmd/kubeshield@v0.1.1
           helm template ci helm/grainops | kubeshield scan -
-      - uses: helm/kind-action@v1
+      - uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1
         with:
           cluster_name: grainops
       - run: bash scripts/k8s-smoke.sh
